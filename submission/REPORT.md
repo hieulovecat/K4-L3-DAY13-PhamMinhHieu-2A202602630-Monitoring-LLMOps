@@ -18,9 +18,9 @@
 
 | Evidence | Đường dẫn |
 |---|---|
-| Pytest cuối | `evidence/01-pytest.png` |
+| Pytest cuối | [`evidence/01-pytest.txt`](evidence/01-pytest.txt) |
 | Log validator | [`evidence/02-log-validator.txt`](evidence/02-log-validator.txt) |
-| Dashboard validator | `evidence/03-dashboard-validator.png` |
+| Dashboard validator | [`evidence/03-dashboard-validator.txt`](evidence/03-dashboard-validator.txt) |
 | Structured log | [`evidence/04-structured-log.txt`](evidence/04-structured-log.txt) |
 | PII redaction | [`evidence/05-pii-redaction.txt`](evidence/05-pii-redaction.txt) |
 | Trace list | [`evidence/06-trace-list.png`](evidence/06-trace-list.png) |
@@ -37,13 +37,13 @@
 
 | Nội dung | Baseline | Kết quả cuối | Nhận xét |
 |---|---|---|---|
-| `validate_logs.py` | 30/100 (thiếu field bắt buộc, 0 correlation ID, thiếu enrichment) | | |
-| `validate_dashboard.py` | 6/6 panel | | |
-| `pytest` | 22 passed | | |
-| Số traces hợp lệ | 0 (chưa cấu hình Langfuse key) | | |
-| Số PII leak | 0 (validator) | | |
-| Latency P95 / TTFT P95 | | | |
-| Retrieval success rate | | | |
+| `validate_logs.py` | 30/100 (thiếu field bắt buộc, 0 correlation ID, thiếu enrichment) | **100/100** (135 correlation ID, 0 thiếu field/enrichment) | Đạt nhờ middleware + `bind_contextvars` + `scrub_event` (CP1) |
+| `validate_dashboard.py` | 6/6 panel | **6/6 panel** | Contract giữ nguyên; thêm dashboard runtime `scripts/dashboard.py` |
+| `pytest` | 22 passed | **28 passed** | +5 test PII/`scrub_event`, +1 test child observation |
+| Số traces hợp lệ | 0 (chưa cấu hình Langfuse key) | **140** root `lab-agent-run` | Từ khi thêm child observations mỗi trace có root → retrieval + generation; 1 trace ERROR có chủ đích (practice `tool_fail`) |
+| Số PII leak | 0 (validator) | **0** (validator) + 0 giá trị PII giả trong log | Starter scrub `message_preview` từ đầu; giờ scrub mọi field trước khi ghi file |
+| Latency P95 / TTFT P95 | khoảng 170 ms / 50 ms (load test chưa bật Langfuse) | **168 ms / 51 ms** lúc ổn định (85 request sau khi có prompt); 2662 ms trong sự cố | Có lúc P95 khoảng 8.6 s do fetch prompt khi chưa có prompt (mục 8) |
+| Retrieval success rate | 100% (không có lỗi) | **99.24%** toàn bộ log (1/131 lỗi do practice `tool_fail`); 100% trong challenge | Challenge không làm retrieval lỗi mà làm retrieval **chậm** |
 
 ## 4. Logging và PII
 
@@ -139,20 +139,33 @@
 
 ## 8. Giải thích và tự đánh giá
 
-- **Một quyết định kỹ thuật quan trọng và lý do:**
+- **Một quyết định kỹ thuật quan trọng và lý do:** **tắt capture input/output tự động của Langfuse (`capture_input=False, capture_output=False`) và chỉ gửi preview đã scrub.** `@observe` mặc định gửi nguyên tham số hàm (message, prompt đã compile, câu trả lời) lên Langfuse, nghĩa là PII người dùng đi ra một dịch vụ bên ngoài, và scrub trong structlog không bảo vệ được đường này. Tôi tự gắn `query_preview`, `prompt_preview`, `answer_preview` qua `summarize_text()` (scrub + cắt 80–200 ký tự). Đánh đổi: trên Langfuse không xem được toàn văn prompt để debug, nhưng vẫn đủ để điều tra (thời gian span, tokens, cost, prompt version), và nội dung prompt đầy đủ vẫn tra được qua link prompt version. Hai quyết định nhỏ khác: validate `x-request-id` bằng regex để chặn log injection, và đặt `scrub_event` sau `format_exc_info` để cả nội dung exception cũng được scrub.
 - **Một lỗi/blocker đã gặp:** sau khi bật Langfuse, latency tăng từ khoảng 170 ms (baseline) lên P95 khoảng 8.6 s và dashboard báo BREACHED ở panel Latency, dù `retrieval` gần 0 s và `llm-generation` chỉ khoảng 0.15 s.
 - **Cách tìm nguyên nhân và xử lý:** đi đúng thứ tự Metrics → Logs → Traces. Dashboard cho thấy P95 cao nhưng TTFT P95 vẫn 51 ms, nên phần chậm không nằm ở LLM. Log `response_sent` có `latency_ms` 2–8 s. Trace cùng `correlation_id` có root `lab-agent-run` dài 4.5 s trong khi hai span con cộng lại chỉ khoảng 0.15 s. Khoảng trống đó là lúc `resolve_prompt()` gọi Langfuse `get_prompt`. Log server báo `Prompt not found: 'day13-chat' with label 'production'` (404), app phải dùng fallback local, và fallback không được cache nên request nào cũng gọi lại mạng; mạng tới cloud.langfuse.com lúc đó rất chậm (health check mất khoảng 34 s). Xử lý: tạo prompt `day13-chat` v1 với label `production` để SDK cache prompt 60 s. Sau đó P50 còn 159 ms và P95 còn 171 ms (`/metrics` sau 81 request). Bài học: gọi dependency ngoài trên đường xử lý request cần có cache và timeout, và việc fetch prompt nên có span riêng để trace chỉ ra được ngay.
-- **Cách hiểu luồng Metrics → Logs → Traces:**
+- **Cách hiểu luồng Metrics → Logs → Traces:** mỗi lớp trả lời một câu hỏi khác nhau và thu hẹp phạm vi cho lớp sau:
+  1. **Metrics — "có vấn đề gì, từ lúc nào, nặng đến đâu?"** Là số tổng hợp rẻ, luôn bật, dùng để phát hiện và khoanh thời gian. Ở CP3, P95 tăng từ 168 lên 2662 ms trong khi TTFT, lỗi và cost không đổi. Chỉ riêng metrics đã loại được giả thuyết "LLM chậm" và "lỗi", nhưng chưa biết request nào hay bước nào.
+  2. **Logs — "request nào bị ảnh hưởng?"** Lọc structured log theo khoảng thời gian và điều kiện (`response_sent`, `latency_ms > ...`) để lấy **`correlation_id` cụ thể** (`req-6c0cdf7d`) cùng ngữ cảnh (feature `monitoring`, model, tokens). Log cho biết *cái gì* xảy ra với từng request, nhưng không chia nhỏ thời gian bên trong request.
+  3. **Traces — "bước nào trong request đó gây ra?"** Mở trace có cùng `correlation_id` thì thấy cây span có thời gian riêng từng bước: `retrieval` 2.5 s so với `llm-generation` 0.16 s, từ đó ra root cause.
+
+  `correlation_id` là sợi dây nối log với trace. Thiếu nó thì phải đoán trace theo thời gian. Thứ tự này quan trọng vì mở trace ngẫu nhiên hoặc đọc hết log mà không có metrics khoanh vùng thì rất tốn thời gian và dễ kết luận sai. Blocker ở CP2 cũng được giải theo đúng chuỗi này.
 - **Vai trò của prompt version, token/cost, SLO hoặc rollback trong vận hành LLM:**
-- **Điều quan trọng nhất đã học:**
+  - **Prompt version + label:** prompt ảnh hưởng trực tiếp đến chất lượng, token và cost nên phải được quản lý phiên bản như code. Gắn `prompt_name/label/version` vào trace cho phép so sánh hai version trên cùng input: v2 tốn thêm 27% input token.
+  - **Rollback bằng label:** chỉ cần chuyển label `production` về v1 là xong, không deploy lại, có hiệu lực trong khoảng thời gian cache (60 s). Đây là cách mitigation nhanh nhất khi một prompt mới gây regression.
+  - **Token/cost:** với LLM, cost tỉ lệ với token nên một prompt dài hơn hoặc output dài bất thường là sự cố về tiền dù hệ thống không lỗi. Đó là lý do có alert `CostOrTokenSpike`.
+  - **SLO/error budget:** biến "hệ thống ổn không" thành con số (99.5% request ≤ 3000 ms) và cho phép quyết định dựa trên budget, ví dụ budget sắp hết thì dừng promote prompt mới.
+- **Điều quan trọng nhất đã học:** alert theo ngưỡng tuyệt đối có thể bỏ sót sự cố thật. Challenge làm latency tăng 16 lần (168 → 2662 ms) nhưng vẫn dưới ngưỡng SLO 3000 ms nên `HighLatencyP95` không bắn. Nếu chỉ nhìn trạng thái alert thì tôi đã kết luận "hệ thống ổn". Cần kết hợp ngưỡng tuyệt đối (ảnh hưởng người dùng) với ngưỡng tương đối so với baseline (phát hiện sớm), và instrument đủ chi tiết (span retrieval riêng) để khi có triệu chứng thì chỉ ra được ngay bước gây lỗi.
 - **Hạn chế hoặc phần chưa hoàn thành, nếu có:**
+  - Không có trace của request chạy lúc `production` trỏ v2 (promote và rollback làm liên tiếp). Promote được chứng minh bằng ảnh `10a` và so sánh v1/v2 bằng trace `candidate`.
+  - Việc fetch prompt từ Langfuse chưa có span riêng, nên ở blocker CP2 phải suy ra từ khoảng trống trong root span.
+  - Handler `async def chat` gọi code đồng bộ nên các request đồng thời bị xếp hàng (phát hiện ở CP3). Tôi chỉ ghi vào preventive measure, chưa sửa code.
+  - Dashboard là script local (inline SVG), chưa có alert tự động gửi Slack; `alert_rules.yaml` mới là đặc tả.
 
 ## 9. Checklist trước khi nộp
 
-- [ ] Kết quả và evidence thuộc commit SHA cuối.
-- [ ] Tất cả ảnh/output mở được bằng đường dẫn tương đối.
-- [ ] Incident evidence nối đúng metric → log → trace.
-- [ ] Trace/prompt evidence thuộc project Langfuse cá nhân và ảnh không lộ key/secret.
-- [ ] Repository chạy lại được theo README.
-- [ ] Không có secret, API key, PII thô hoặc evidence của người khác/lớp khác.
+- [x] Kết quả và evidence thuộc commit SHA cuối.
+- [x] Tất cả ảnh/output mở được bằng đường dẫn tương đối.
+- [x] Incident evidence nối đúng metric → log → trace.
+- [x] Trace/prompt evidence thuộc project Langfuse cá nhân và ảnh không lộ key/secret.
+- [x] Repository chạy lại được theo README.
+- [x] Không có secret, API key, PII thô hoặc evidence của người khác/lớp khác.
 - [ ] URL repo và commit SHA cuối đã được nộp trên LMS/Codelabs.
