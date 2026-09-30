@@ -20,12 +20,16 @@ class RecordingLangfuseClient:
     def __init__(self) -> None:
         self.prompt = ManagedPrompt()
         self.span_updates: list[dict] = []
+        self.generation_updates: list[dict] = []
 
     def get_prompt(self, name: str, **kwargs):
         return self.prompt
 
     def update_current_span(self, **kwargs) -> None:
         self.span_updates.append(kwargs)
+
+    def update_current_generation(self, **kwargs) -> None:
+        self.generation_updates.append(kwargs)
 
 
 def test_agent_records_prompt_version_with_v4_observation_api(monkeypatch) -> None:
@@ -67,3 +71,31 @@ def test_agent_records_prompt_version_with_v4_observation_api(monkeypatch) -> No
     assert span_update["version"] == "3"
     assert propagated[0]["metadata"]["correlation_id"] == "req-12345678"
     assert propagated[-1]["prompt"] is client.prompt
+
+
+def test_agent_records_retrieval_and_generation_child_observations(monkeypatch) -> None:
+    client = RecordingLangfuseClient()
+    monkeypatch.setattr(agent_module, "get_langfuse_client", lambda: client)
+    monkeypatch.setattr(agent_module, "tracing_enabled", lambda: True)
+
+    agent = agent_module.LabAgent()
+    result = agent_module.LabAgent.run.__wrapped__(
+        agent,
+        user_id="student-01",
+        feature="qa",
+        session_id="session-01",
+        message="Email a@b.com about monitoring",
+        correlation_id="req-12345678",
+    )
+
+    retrieval_outputs = [u for u in client.span_updates if "output" in u and "doc_count" in u["output"]]
+    assert retrieval_outputs and retrieval_outputs[0]["output"]["doc_count"] == 1
+
+    generation = client.generation_updates[-1]
+    assert generation["model"] == agent.model
+    assert generation["prompt"] is client.prompt
+    assert generation["usage_details"]["input"] == result.tokens_in
+    assert generation["usage_details"]["output"] == result.tokens_out
+    assert generation["cost_details"]["total"] == result.cost_usd
+    assert generation["metadata"]["prompt_version"] == "3"
+    assert "a@b.com" not in str(client.span_updates) + str(client.generation_updates)

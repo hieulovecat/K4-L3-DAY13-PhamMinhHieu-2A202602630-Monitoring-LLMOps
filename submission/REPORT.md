@@ -60,9 +60,16 @@
 
 ## 5. Tracing và prompt versioning
 
-- **Cách xác nhận traces do chính tôi tạo trong project cá nhân:**
-- **Cấu trúc root/retrieval/generation observations:**
-- **Cách nối trace với log:**
+- **Cách xác nhận traces do chính tôi tạo trong project cá nhân:** key trong `.env` là key của project `day13-k4-l3b-2A202602630`, và `/health` trả `tracing_enabled: true`. Mọi trace do tôi tự chạy `scripts/load_test.py` và `curl` tạo ra. Mỗi trace có `correlation_id` trùng với một dòng trong `data/logs.jsonl` của tôi (ví dụ `req-cp2test1` → trace `35f3d9824e70e9576b8c5d553012416a`).
+- **Cấu trúc root/retrieval/generation observations:** [app/agent.py](../app/agent.py) dùng decorator `@observe` của Langfuse SDK v4:
+  ```text
+  day13-agent-request (trace)
+  └── lab-agent-run            (agent)      metadata: correlation_id, feature, model, prompt_name/label/version/source, doc_count
+      ├── retrieval            (retriever)  input: query_preview đã scrub; output: doc_count, docs_preview; metadata: retrieval_hit
+      └── llm-generation       (generation) model, usage_details {input, output, total}, cost_details {input, output, total}, prompt (link tới prompt version), ttft_ms
+  ```
+  `capture_input/capture_output=False` trên cả ba observation nên không có raw prompt/answer trên Langfuse, chỉ có preview đã qua `scrub_text`. Cost tính theo giá 3 USD/1M input token và 15 USD/1M output token, khớp với `cost_usd` trong log. Khi retrieval lỗi, `@observe` tự đánh dấu observation `retrieval` và root là `ERROR` kèm status message (đã thử với practice `tool_fail`: trace `7065bf3cc97e2d3911f590d8ad7bf4cd`, `Vector store timeout`).
+- **Cách nối trace với log:** middleware tạo `correlation_id` và truyền vào `agent.run()`. `propagate_attributes(metadata={"correlation_id": ...})` gắn ID đó cho mọi observation trong trace, còn structlog contextvars gắn cùng ID cho mọi dòng log. Từ log lấy `correlation_id`, lên Langfuse lọc metadata `correlation_id` là ra đúng trace (và ngược lại). `user_id` trên trace là cùng `user_id_hash` với log.
 - **Prompt name:**
 - **Version/label baseline:**
 - **Version/label candidate:**
@@ -71,10 +78,15 @@
 
 ## 6. Dashboard, SLO và alerts
 
-- **Dashboard và sáu panel:**
-- **SLO và lý do chọn:**
-- **Cách tính error budget:**
-- **Ba alert và runbook tương ứng:**
+- **Dashboard và sáu panel:** [scripts/dashboard.py](../scripts/dashboard.py) là dashboard local, chỉ dùng thư viện chuẩn và PyYAML. Chạy `python scripts/dashboard.py` rồi mở `http://localhost:8501`. Mỗi lần tải trang, script đọc `data/logs.jsonl` và `config/dashboard.yaml`, vẽ đúng 6 panel theo contract: Latency P50/P95/P99 + TTFT P95 (ms), Traffic (requests/phút), Error rate + breakdown `error_type` + retrieval success (%), Cost theo phút + tổng (USD), Tokens in/out (tokens), Quality proxy mean (0–1). Time range mặc định 60 phút, tự refresh 30 giây, mỗi panel có đơn vị, đường threshold nét đứt và dòng trạng thái `OK`/`BREACHED` so với threshold trong contract. `validate_dashboard.py` đạt 6/6.
+- **SLO và lý do chọn:** giữ SLO trong [config/slo.yaml](../config/slo.yaml): **99.5% request thành công và `latency_ms <= 3000` trong cửa sổ 28 ngày**. SLI = số `response_sent` có latency ≤ 3000 ms / số `request_received`. Baseline khi prompt đã cache là khoảng 160–600 ms (generation khoảng 150 ms, TTFT khoảng 50 ms), nên 3000 ms vẫn còn đủ khoảng cho lúc network/Langfuse chậm mà vẫn bắt được `rag_slow` (+2.5 s ở retrieval). Lý do chi tiết ghi ở mục `explanation` trong file.
+- **Cách tính error budget:** error budget = 100% − 99.5% = **0.5%**. Với 10,000 request/28 ngày thì tối đa 50 request được phép lỗi hoặc chậm hơn 3000 ms. Burn rate = tỉ lệ request xấu / 0.005; ví dụ 5% request xấu trong 1 giờ là đốt nhanh gấp 10 lần. Chính sách: còn dưới 50% budget thì dừng promote prompt/model mới; hết budget thì freeze thay đổi.
+- **Ba alert và runbook tương ứng:** [config/alert_rules.yaml](../config/alert_rules.yaml) và [docs/alerts.md](../docs/alerts.md). Cả ba đều symptom-based, gửi Slack `#k4-l3b-alerts`, owner `student-2A202602630`:
+  | Alert | Severity | Điều kiện | Duration | Runbook |
+  |---|---|---|---|---|
+  | `HighLatencyP95` | warning | `p95(latency_ms) > 3000` | 5m | [alert-1](../docs/alerts.md#alert-1) |
+  | `HighErrorRateOrRetrievalFailure` | critical | error rate > 2% **hoặc** retrieval success < 90% | 3m | [alert-2](../docs/alerts.md#alert-2) |
+  | `CostOrTokenSpike` | warning | avg cost/request > 2× baseline **hoặc** avg `tokens_out` > 400 | 10m | [alert-3](../docs/alerts.md#alert-3) |
 
 > Ví dụ cách viết error budget: "SLO 99.5% trong 28 ngày nghĩa là error budget 0.5%. Nếu workload có 10,000 request thì tối đa 50 request được phép lỗi hoặc chậm hơn ngưỡng SLO."
 
