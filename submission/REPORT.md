@@ -114,6 +114,8 @@
   | Tokens in/out TB, cost TB | 34 / 129, 0.00203 USD | 35 / 142, 0.00224 USD |
   | Quality proxy | 0.880 | 0.840 |
 
+  Trên ảnh dashboard, đỉnh latency sự cố là điểm khoảng 2600 ms lúc khoảng 05:01 UTC ở cuối biểu đồ; P95 của cả cửa sổ 60 phút bị kéo lên 2659 ms vì 5/93 request (>5%) bị chậm. Đỉnh khoảng 2844 ms quanh 04:3x là blocker fetch prompt ở CP2 (xem mục 8), không thuộc sự cố này.
+
   TTFT, token, cost và lỗi đều không đổi, chỉ tổng latency tăng. Vậy phần chậm nằm **ngoài bước sinh token của LLM** và không phải lỗi. Phía client còn thấy khoảng 13.4 s/request (xem điểm phụ bên dưới).
 - **Log line và correlation ID liên quan:** lọc `event == "response_sent"` trong khoảng sự cố thì cả 5 request đều có `feature=monitoring`, `latency_ms` 2659–2662, `ttft_ms=50`, `tool_name=retrieval`, `tool_success=true`. Chọn đại diện **`correlation_id=req-6c0cdf7d`** (`response_sent` lúc 05:01:06.980Z, `latency_ms=2662`) ([13-incident-log](evidence/13-incident-log.txt)).
 - **Trace ID và span gây ảnh hưởng:** trace **`b459eb4e45e1f61d236ad7ac6d967736`** có cùng metadata `correlation_id=req-6c0cdf7d` ([14-incident-trace](evidence/14-incident-trace.png)):
