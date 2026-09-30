@@ -9,7 +9,7 @@
 - **Lớp:** K4-L3B
 - **Repository URL:** https://github.com/hieulovecat/K4-L3-DAY13-PhamMinhHieu-2A202602630-Monitoring-LLMOps
 - **Commit SHA cuối:**
-- **Challenge ID:**
+- **Challenge ID:** `day13-k4-l3b-monitoring-llmops-v1`
 - **Tên project Langfuse cá nhân:** `day13-k4-l3b-2A202602630`
 
 ## 2. Evidence index
@@ -29,9 +29,9 @@
 | Prompt versions | [`evidence/09-prompt-versions.png`](evidence/09-prompt-versions.png) |
 | Prompt rollback | Promote: [`evidence/10a-prompt-promote.png`](evidence/10a-prompt-promote.png) · Rollback: [`evidence/10-prompt-rollback.png`](evidence/10-prompt-rollback.png) |
 | Dashboard runtime | [`evidence/11-dashboard-overview.png`](evidence/11-dashboard-overview.png) |
-| Incident metric | `evidence/12-incident-metric.png` |
-| Incident log | `evidence/13-incident-log.png` |
-| Incident trace | `evidence/14-incident-trace.png` |
+| Incident metric | [`evidence/12-incident-metric.png`](evidence/12-incident-metric.png) |
+| Incident log | [`evidence/13-incident-log.txt`](evidence/13-incident-log.txt) |
+| Incident trace | [`evidence/14-incident-trace.png`](evidence/14-incident-trace.png) |
 
 ## 3. Kết quả kỹ thuật
 
@@ -103,14 +103,35 @@
 
 ## 7. Điều tra challenge
 
-- **Challenge ID:**
-- **Khoảng thời gian điều tra:**
-- **Triệu chứng từ metrics:**
-- **Log line và correlation ID liên quan:**
-- **Trace ID và span gây ảnh hưởng:**
-- **Root cause:**
-- **Fix action:**
+- **Challenge ID:** `day13-k4-l3b-monitoring-llmops-v1` (cohort K4). Chạy `python scripts/inject_incident.py` rồi `python scripts/load_test.py --challenge --concurrency 5`.
+- **Khoảng thời gian điều tra:** sự cố từ **2026-09-30 05:00:59Z đến 05:01:18Z** (12:00:59–12:01:18 ICT), gồm 5 request challenge. Baseline để so sánh: 04:40–05:00Z (80 request). Phục hồi từ 05:02:22Z.
+- **Triệu chứng từ metrics:** panel **Latency** vượt hẳn baseline, các panel khác gần như không đổi ([12-incident-metric](evidence/12-incident-metric.png)):
+  | Metric | Baseline 04:40–05:00Z | Sự cố 05:00:59–05:01:18Z |
+  |---|---|---|
+  | Latency P50 / P95 | 159 / 168 ms | **2661 / 2662 ms** (khoảng ×16) |
+  | TTFT P95 | 51 ms | 50 ms (không đổi) |
+  | Error rate / retrieval success | 0% / 100% | 0% / 100% |
+  | Tokens in/out TB, cost TB | 34 / 129, 0.00203 USD | 35 / 142, 0.00224 USD |
+  | Quality proxy | 0.880 | 0.840 |
+
+  TTFT, token, cost và lỗi đều không đổi, chỉ tổng latency tăng. Vậy phần chậm nằm **ngoài bước sinh token của LLM** và không phải lỗi. Phía client còn thấy khoảng 13.4 s/request (xem điểm phụ bên dưới).
+- **Log line và correlation ID liên quan:** lọc `event == "response_sent"` trong khoảng sự cố thì cả 5 request đều có `feature=monitoring`, `latency_ms` 2659–2662, `ttft_ms=50`, `tool_name=retrieval`, `tool_success=true`. Chọn đại diện **`correlation_id=req-6c0cdf7d`** (`response_sent` lúc 05:01:06.980Z, `latency_ms=2662`) ([13-incident-log](evidence/13-incident-log.txt)).
+- **Trace ID và span gây ảnh hưởng:** trace **`b459eb4e45e1f61d236ad7ac6d967736`** có cùng metadata `correlation_id=req-6c0cdf7d` ([14-incident-trace](evidence/14-incident-trace.png)):
+  | Observation | Sự cố | Bình thường |
+  |---|---|---|
+  | `lab-agent-run` (root) | 2.666 s | khoảng 0.16 s |
+  | **`retrieval`** | **2.505 s** (94% tổng thời gian) | khoảng 0 s |
+  | `llm-generation` | 0.156 s, 36/156 tokens, v1 | khoảng 0.15 s |
+
+  Request thứ hai `req-e72fe35d` → trace `089b9bc0d781c2113bfeaaa5ed70c6a1` cho kết quả giống hệt (retrieval 2.507 s), nên đây là lỗi hệ thống chứ không phải một request đơn lẻ.
+- **Root cause:** **bước retrieval (RAG / vector store) bị chậm thêm khoảng 2.5 s mỗi request**. Retrieval vẫn trả về tài liệu (không lỗi, `tool_success=true`, quality gần như giữ nguyên) nhưng rất chậm. LLM, prompt (vẫn v1, không có thay đổi prompt) và network tới Langfuse đều không liên quan, vì `llm-generation` và TTFT giữ nguyên baseline.
+  - **Phát hiện phụ:** 5 request gửi song song nhưng `response_sent` hoàn thành **lần lượt**, cách nhau khoảng 2.67 s, nên client thấy khoảng 13.4 s/request (bằng 5 × 2.66 s). Lý do: handler `async def chat` gọi `agent.run()` đồng bộ (có `time.sleep`), chặn event loop của uvicorn, nên một dependency chậm làm cả server xếp hàng. Đây là yếu tố **khuếch đại** sự cố chứ không phải nguyên nhân gốc.
+- **Fix action:** khôi phục retrieval về trạng thái bình thường (trong lab là tắt incident: `python scripts/inject_incident.py --disable`). Chạy lại đúng bộ câu hỏi challenge lúc 05:02:22Z thì latency còn **156–162 ms**, TTFT 50 ms, 0 lỗi, tức đã về baseline. Trong production tương ứng với: kiểm tra vector store (index, tải, network), failover sang replica, hoặc tạm dùng fallback docs.
 - **Preventive measure:**
+  1. Alert `HighLatencyP95` (p95 > 3000 ms/5m) **không bắn** vì 2662 ms nằm ngay dưới ngưỡng, dù latency đã gấp 16 lần. Cần thêm một alert tương đối như `p95 > 5 × baseline` trong 5m, hoặc alert riêng cho span retrieval, như `p95(retrieval) > 500 ms`.
+  2. Đặt timeout cho retrieval (ví dụ 800 ms); quá thời gian thì trả lời bằng fallback docs thay vì bắt người dùng chờ.
+  3. Không chạy code blocking trong `async def`: chuyển `chat` thành `def` hoặc gọi `await run_in_threadpool(agent.run, ...)`, để một dependency chậm không làm cả server xếp hàng.
+  4. Ghi `retrieval_ms` vào `response_sent` và thêm vào panel Latency, để lần sau đọc dashboard là biết ngay bước nào chậm mà chưa cần mở trace.
 
 > Gợi ý cách viết ngắn, không thay cho evidence thực tế: "Metric cho thấy `[latency/error/cost/quality]` bất thường trong `[khoảng thời gian]`. Log line `[event]` có `correlation_id=[...]` đại diện cho request bị ảnh hưởng. Trace cùng `correlation_id` cho thấy span `[retrieval/generation/prompt/tool]` có dấu hiệu `[chậm/lỗi/token tăng]`. Root cause là `[nguyên nhân suy ra từ evidence]`. Fix action là `[hành động khôi phục]`; preventive measure là `[alert/runbook/test/guardrail để ngăn tái diễn]`."
 

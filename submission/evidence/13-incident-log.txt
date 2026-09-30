@@ -1,0 +1,56 @@
+# Incident log evidence - challenge day13-k4-l3b-monitoring-llmops-v1
+# Incident window: 2026-09-30T05:00:59Z -> 05:01:18Z (5 challenge requests, feature=monitoring)
+# Filter: event == response_sent AND ts in window  -> all 5 have latency_ms ~2660 (baseline p95 168 ms), ttft_ms 50 (unchanged)
+
+2026-09-30T05:01:06.980503Z  correlation_id=req-6c0cdf7d  feature=monitoring  latency_ms=2662  ttft_ms=50  tokens_in=36  tokens_out=156  tool=retrieval/True
+2026-09-30T05:01:09.654655Z  correlation_id=req-918a4508  feature=monitoring  latency_ms=2659  ttft_ms=50  tokens_in=35  tokens_out=121  tool=retrieval/True
+2026-09-30T05:01:12.318922Z  correlation_id=req-5f268720  feature=monitoring  latency_ms=2659  ttft_ms=50  tokens_in=35  tokens_out=91  tool=retrieval/True
+2026-09-30T05:01:14.989487Z  correlation_id=req-5aec8f41  feature=monitoring  latency_ms=2661  ttft_ms=50  tokens_in=34  tokens_out=178  tool=retrieval/True
+2026-09-30T05:01:17.663635Z  correlation_id=req-e72fe35d  feature=monitoring  latency_ms=2661  ttft_ms=50  tokens_in=35  tokens_out=166  tool=retrieval/True
+
+## Selected request (full structured log lines): correlation_id=req-6c0cdf7d
+{
+  "service": "api",
+  "payload": {
+    "message_preview": "Which signal should be checked after latency increases?"
+  },
+  "event": "request_received",
+  "user_id_hash": "c3a24a72d92a",
+  "feature": "monitoring",
+  "env": "dev",
+  "session_id": "k4-l3b-challenge-s04",
+  "correlation_id": "req-6c0cdf7d",
+  "model": "claude-sonnet-4-5",
+  "level": "info",
+  "ts": "2026-09-30T05:01:04.312682Z"
+}
+{
+  "service": "api",
+  "latency_ms": 2662,
+  "ttft_ms": 50,
+  "tokens_in": 36,
+  "tokens_out": 156,
+  "cost_usd": 0.002448,
+  "quality_score": 0.9,
+  "tool_name": "retrieval",
+  "tool_success": true,
+  "payload": {
+    "answer_preview": "Starter answer. You should improve this output logic and add better quality chec..."
+  },
+  "event": "response_sent",
+  "user_id_hash": "c3a24a72d92a",
+  "feature": "monitoring",
+  "env": "dev",
+  "session_id": "k4-l3b-challenge-s04",
+  "correlation_id": "req-6c0cdf7d",
+  "model": "claude-sonnet-4-5",
+  "level": "info",
+  "ts": "2026-09-30T05:01:06.980503Z"
+}
+
+## After disabling incident (recovery run, same challenge queries)
+2026-09-30T05:02:24.508810Z  correlation_id=req-81006fa1  feature=monitoring  latency_ms=156  ttft_ms=50
+2026-09-30T05:02:24.676053Z  correlation_id=req-3818f1dc  feature=monitoring  latency_ms=158  ttft_ms=50
+2026-09-30T05:02:24.848644Z  correlation_id=req-80ba9966  feature=monitoring  latency_ms=162  ttft_ms=50
+2026-09-30T05:02:25.018046Z  correlation_id=req-b741c6bd  feature=monitoring  latency_ms=159  ttft_ms=50
+2026-09-30T05:02:25.191181Z  correlation_id=req-c63ed4a1  feature=monitoring  latency_ms=160  ttft_ms=50
