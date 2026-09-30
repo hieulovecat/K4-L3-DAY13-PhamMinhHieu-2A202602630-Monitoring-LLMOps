@@ -1,0 +1,54 @@
+# PII redaction demo (fake data only)
+# Request sent with header x-request-id: pii-demo-01
+# Input message (FAKE): email, VN phone, CCCD, card, passport -> values omitted here on purpose
+
+## Response headers
+x-request-id: pii-demo-01
+x-response-time-ms: 6296.9
+
+## Log lines in data/logs.jsonl
+{
+  "service": "api",
+  "payload": {
+    "message_preview": "Toi la [REDACTED_EMAIL], SDT [REDACTED_PHONE_VN], CCCD [REDACTED_CCCD], the [RED..."
+  },
+  "event": "request_received",
+  "session_id": "s_pii_demo",
+  "model": "claude-sonnet-4-5",
+  "feature": "qa",
+  "env": "dev",
+  "correlation_id": "pii-demo-01",
+  "user_id_hash": "7d7f920700cb",
+  "level": "info",
+  "ts": "2026-09-30T03:26:44.944536Z"
+}
+{
+  "service": "api",
+  "latency_ms": 6283,
+  "ttft_ms": 50,
+  "tokens_in": 47,
+  "tokens_out": 134,
+  "cost_usd": 0.002151,
+  "quality_score": 0.8,
+  "tool_name": "retrieval",
+  "tool_success": true,
+  "payload": {
+    "answer_preview": "Starter answer. You should improve this output logic and add better quality chec..."
+  },
+  "event": "response_sent",
+  "session_id": "s_pii_demo",
+  "model": "claude-sonnet-4-5",
+  "feature": "qa",
+  "env": "dev",
+  "correlation_id": "pii-demo-01",
+  "user_id_hash": "7d7f920700cb",
+  "level": "info",
+  "ts": "2026-09-30T03:26:51.238269Z"
+}
+
+## Count of each raw input value found in data/logs.jsonl (expect 0)
+email (fake) -> 0
+phone_vn (fake) -> 0
+cccd (fake) -> 0
+credit_card (test number) -> 0
+passport (fake) -> 0

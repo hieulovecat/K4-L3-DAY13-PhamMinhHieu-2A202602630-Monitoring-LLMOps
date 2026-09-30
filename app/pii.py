@@ -3,12 +3,16 @@ from __future__ import annotations
 import hashlib
 import re
 
+# Order matters: longer digit patterns (card, CCCD) run before phone so a 16-digit card
+# number is not partially redacted as a phone number.
 PII_PATTERNS: dict[str, str] = {
     "email": r"[\w\.-]+@[\w\.-]+\.\w+",
-    "phone_vn": r"(?<!\d)(?:\+84|0)(?:[ .-]?\d){9}(?!\d)",
-    "cccd": r"\b\d{12}\b",
     "credit_card": r"\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b",
+    "cccd": r"\b\d{12}\b",
+    "phone_vn": r"(?<!\d)(?:\+84|0)(?:[ .-]?\d){9}(?!\d)",
     # TODO: Add more patterns (e.g., Passport, Vietnamese address keywords)
+    # Vietnamese passport: one uppercase letter followed by 7 digits, e.g. C1234567.
+    "passport": r"\b[A-Z]\d{7}\b",
 }
 
 
