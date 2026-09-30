@@ -24,11 +24,11 @@
 | Structured log | [`evidence/04-structured-log.txt`](evidence/04-structured-log.txt) |
 | PII redaction | [`evidence/05-pii-redaction.txt`](evidence/05-pii-redaction.txt) |
 | Trace list | [`evidence/06-trace-list.png`](evidence/06-trace-list.png) |
-| Trace waterfall | `evidence/07-trace-waterfall.png` |
-| Trace metadata | `evidence/08-trace-metadata.png` |
+| Trace waterfall | [`evidence/07-trace-waterfall.png`](evidence/07-trace-waterfall.png) |
+| Trace metadata | [`evidence/08-trace-metadata.png`](evidence/08-trace-metadata.png) |
 | Prompt versions | [`evidence/09-prompt-versions.png`](evidence/09-prompt-versions.png) |
 | Prompt rollback | Promote: [`evidence/10a-prompt-promote.png`](evidence/10a-prompt-promote.png) · Rollback: [`evidence/10-prompt-rollback.png`](evidence/10-prompt-rollback.png) |
-| Dashboard runtime | `evidence/11-dashboard-overview.png` |
+| Dashboard runtime | [`evidence/11-dashboard-overview.png`](evidence/11-dashboard-overview.png) |
 | Incident metric | `evidence/12-incident-metric.png` |
 | Incident log | `evidence/13-incident-log.png` |
 | Incident trace | `evidence/14-incident-trace.png` |
@@ -117,8 +117,8 @@
 ## 8. Giải thích và tự đánh giá
 
 - **Một quyết định kỹ thuật quan trọng và lý do:**
-- **Một lỗi/blocker đã gặp:**
-- **Cách tìm nguyên nhân và xử lý:**
+- **Một lỗi/blocker đã gặp:** sau khi bật Langfuse, latency tăng từ khoảng 170 ms (baseline) lên P95 khoảng 8.6 s và dashboard báo BREACHED ở panel Latency, dù `retrieval` gần 0 s và `llm-generation` chỉ khoảng 0.15 s.
+- **Cách tìm nguyên nhân và xử lý:** đi đúng thứ tự Metrics → Logs → Traces. Dashboard cho thấy P95 cao nhưng TTFT P95 vẫn 51 ms, nên phần chậm không nằm ở LLM. Log `response_sent` có `latency_ms` 2–8 s. Trace cùng `correlation_id` có root `lab-agent-run` dài 4.5 s trong khi hai span con cộng lại chỉ khoảng 0.15 s. Khoảng trống đó là lúc `resolve_prompt()` gọi Langfuse `get_prompt`. Log server báo `Prompt not found: 'day13-chat' with label 'production'` (404), app phải dùng fallback local, và fallback không được cache nên request nào cũng gọi lại mạng; mạng tới cloud.langfuse.com lúc đó rất chậm (health check mất khoảng 34 s). Xử lý: tạo prompt `day13-chat` v1 với label `production` để SDK cache prompt 60 s. Sau đó P50 còn 159 ms và P95 còn 171 ms (`/metrics` sau 81 request). Bài học: gọi dependency ngoài trên đường xử lý request cần có cache và timeout, và việc fetch prompt nên có span riêng để trace chỉ ra được ngay.
 - **Cách hiểu luồng Metrics → Logs → Traces:**
 - **Vai trò của prompt version, token/cost, SLO hoặc rollback trong vận hành LLM:**
 - **Điều quan trọng nhất đã học:**
