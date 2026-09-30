@@ -23,11 +23,11 @@
 | Dashboard validator | `evidence/03-dashboard-validator.png` |
 | Structured log | [`evidence/04-structured-log.txt`](evidence/04-structured-log.txt) |
 | PII redaction | [`evidence/05-pii-redaction.txt`](evidence/05-pii-redaction.txt) |
-| Trace list | `evidence/06-trace-list.png` |
+| Trace list | [`evidence/06-trace-list.png`](evidence/06-trace-list.png) |
 | Trace waterfall | `evidence/07-trace-waterfall.png` |
 | Trace metadata | `evidence/08-trace-metadata.png` |
-| Prompt versions | `evidence/09-prompt-versions.png` |
-| Prompt rollback | `evidence/10-prompt-rollback.png` |
+| Prompt versions | [`evidence/09-prompt-versions.png`](evidence/09-prompt-versions.png) |
+| Prompt rollback | Promote: [`evidence/10a-prompt-promote.png`](evidence/10a-prompt-promote.png) · Rollback: [`evidence/10-prompt-rollback.png`](evidence/10-prompt-rollback.png) |
 | Dashboard runtime | `evidence/11-dashboard-overview.png` |
 | Incident metric | `evidence/12-incident-metric.png` |
 | Incident log | `evidence/13-incident-log.png` |
@@ -70,11 +70,22 @@
   ```
   `capture_input/capture_output=False` trên cả ba observation nên không có raw prompt/answer trên Langfuse, chỉ có preview đã qua `scrub_text`. Cost tính theo giá 3 USD/1M input token và 15 USD/1M output token, khớp với `cost_usd` trong log. Khi retrieval lỗi, `@observe` tự đánh dấu observation `retrieval` và root là `ERROR` kèm status message (đã thử với practice `tool_fail`: trace `7065bf3cc97e2d3911f590d8ad7bf4cd`, `Vector store timeout`).
 - **Cách nối trace với log:** middleware tạo `correlation_id` và truyền vào `agent.run()`. `propagate_attributes(metadata={"correlation_id": ...})` gắn ID đó cho mọi observation trong trace, còn structlog contextvars gắn cùng ID cho mọi dòng log. Từ log lấy `correlation_id`, lên Langfuse lọc metadata `correlation_id` là ra đúng trace (và ngược lại). `user_id` trên trace là cùng `user_id_hash` với log.
-- **Prompt name:**
-- **Version/label baseline:**
-- **Version/label candidate:**
-- **Trace ID của mỗi version:**
-- **Cách promote và rollback `production`:**
+- **Prompt name:** `day13-chat` (text prompt, 3 biến `{{feature}}`, `{{docs}}`, `{{message}}`)
+- **Version/label baseline:** version 1, labels `baseline` + `production`. Nội dung là template gốc `Feature=… / Docs=… / Question=…`.
+- **Version/label candidate:** version 2, label `candidate` (commit message `v2: concise answer`). Giống v1 và thêm dòng `Answer concisely in at most 3 sentences.`
+- **Trace ID của mỗi version:** cùng input `"Explain how monitoring uses metrics logs and traces"`, chạy server với `LANGFUSE_PROMPT_LABEL` tương ứng:
+  | Label | Correlation ID | Trace ID | Prompt link trên generation | tokens_in | cost_usd |
+  |---|---|---|---|---|---|
+  | `baseline` | `req-label-baseline` | `6131590d402f3b8252a6a947aa6737e3` | `day13-chat` v1 | 41 | 0.002193 |
+  | `candidate` | `req-label-candidate` | `5de89f13571193255fd6454bb52b0bdf` | `day13-chat` v2 | 52 | 0.002271 |
+
+  v2 dài hơn nên tốn thêm 11 input token cho mỗi request (+27%). Đây là tác động token/cost mà trace theo version cho phép đo được trước khi promote.
+- **Cách promote và rollback `production`:** app chỉ gọi `get_prompt("day13-chat", label=LANGFUSE_PROMPT_LABEL)` với label mặc định `production`. Label trỏ vào version nào thì app dùng version đó, nên đổi prompt không cần sửa code hay deploy lại; SDK cache 60 giây nên thay đổi có hiệu lực trong tối đa khoảng 1 phút.
+  1. **Trước khi đổi:** v1 = `production`, `baseline`; v2 = `candidate`, `latest` ([09-prompt-versions](evidence/09-prompt-versions.png)).
+  2. **Promote (11:29 ICT):** trên Langfuse UI, gắn label `production` cho version 2. Langfuse tự gỡ `production` khỏi v1 vì mỗi label chỉ nằm ở một version ([10a-prompt-promote](evidence/10a-prompt-promote.png)).
+  3. **Quyết định rollback:** so sánh 2 trace ở bảng trên, v2 tốn thêm 27% input token (41 → 52) mà quality proxy không đổi, nên không đáng để giữ trên production.
+  4. **Rollback (11:33 ICT):** gắn lại `production` cho version 1 ([10-prompt-rollback](evidence/10-prompt-rollback.png)). Kiểm tra qua API `GET /api/public/v2/prompts/day13-chat`: v1 = `baseline`, `production`; v2 = `latest`, `candidate`.
+  5. **Xác minh bằng trace:** request sau rollback `req-after-rollback` → trace `c3c6b15d7cb7e83e754d8ed1ceaf0538`, metadata `prompt_label=production`, `prompt_version=1`, generation link tới `day13-chat` v1, `tokens_in=41` (giống baseline).
 
 ## 6. Dashboard, SLO và alerts
 
